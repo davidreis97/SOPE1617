@@ -58,7 +58,7 @@ void argumentHandling(int argc, char*argv[], COMMAND *command){
     int argno = 0;
     
     if (argc < 2){
-        printf("Invalid no of arguments\n");
+        printf("ERROR: Invalid no of arguments\n");
         exit(1);
     }
 
@@ -102,11 +102,15 @@ void argumentHandling(int argc, char*argv[], COMMAND *command){
         }else if(strcmp("-exec",argv[argno]) == 0 && argno + 1 < argc){
             command->command = &argv[argno+1];
             argno++;
+        }else if(strcmp(";",argv[argno])){
+            printf("WARNING: Ignoring unknown/incomplete argument %s\n", argv[argno]);
         }
     }
 }
 
 void argumentValidation(COMMAND *command, wordexp_t *expansion){
+    int i = 0;
+
     //Processing tilde ('~') on directory
     if (wordexp(command->directory, expansion, 0) != 0){
         perror("WORDEXP error");
@@ -123,6 +127,13 @@ void argumentValidation(COMMAND *command, wordexp_t *expansion){
         if((command->type[0] != 'f' && command->type[0] != 'd' && command->type[0] != 'l') || strlen(command->type) != 1){
             fprintf(stderr,"Type %s is not valid!\n[f - file | d - directory | l - symlink]\n",command->type);
             exit(1);
+        }
+    }
+
+    //Ultimo elemento do exec tem de ser NULL - Isto previne que, por exemplo, em "$./sfind . -exec ls ; -print" seja executado o comando "ls ; -print"
+    for(i = 0; command->command != NULL && command->command[i] != NULL ; i++){
+        if(strcmp(command->command[i], ";") == 0){
+            command->command[i] = NULL;
         }
     }
 }
@@ -228,8 +239,39 @@ int correctName(char *filename, COMMAND command){
 }
 
 int executeCommand(char *filepath, COMMAND command){ //TODO -> "-exec"
-    printf("Executing...\n");
-    return 0;
+    pid_t pid;
+
+    pid = fork();
+
+    if(pid < 0){
+        perror("ERROR FORKING");
+        return 1;
+    }
+    else if(pid == 0){
+        int i;
+        
+        //Substituindo {} pelo nome do ficheiro atual
+        for(i = 0; command.command[i] != NULL ; i++){
+            if(strcmp(command.command[i], "{}") == 0){
+                command.command[i] = malloc(sizeof(char)*(strlen(filepath)+1)); //NOTA: ao chamar exec, o novo programa reclama a memoria aqui alocada dinamicamente logo nao ha necessidade de free()
+                strcpy(command.command[i], filepath);
+            }
+        }
+
+        execvp(command.command[0], command.command);
+   
+        perror("EXECVP ERROR");
+        return 1;
+    }
+    else{
+        int status = 0;
+
+        waitpid(pid, &status, 0);
+
+        return WEXITSTATUS(status);
+    }     
+
+    return 1;
 }
 
 int traverseDirectory(COMMAND command){
@@ -237,10 +279,16 @@ int traverseDirectory(COMMAND command){
     struct dirent *dp;
     struct stat dir_info;
 
-    dir = opendir(command.directory);
+    if(!strcmp(command.directory,"\0")){ //Ao remover / no processamento de argumentos, executando na pasta root ficaria a string vazia.
+        dir = opendir("/");
+    }else{
+        dir = opendir(command.directory);
+    }
+    
 
     if(dir == NULL){
         perror("OPENDIR ERROR");
+        printf("Trying to open %s\n",command.directory);
         return -1;
     }
 
@@ -317,6 +365,7 @@ int main(int argc, char *argv[]){
     argumentHandling(argc, argv, &command);
 
     argumentValidation(&command, &expansion);
+
 
     initial = fork();
 
