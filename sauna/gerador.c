@@ -38,7 +38,7 @@ void argumentHandling(int argc, char*argv[], COMMAND *command){
 
 
 void cenaNova(){
-    codigo incompleto
+    printf("teste\n");
 }
 
 int main(int argc, char *argv[]){
