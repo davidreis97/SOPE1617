@@ -8,7 +8,7 @@ typedef struct command{
     char timeUnit;
 }COMMAND;
 
-//int DEBUG = 0;
+int DEBUG = 0;
 
 void argumentHandling(int argc, char*argv[], COMMAND *command){    
     if (argc != 3){
