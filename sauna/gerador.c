@@ -2,12 +2,29 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+#define OP_MODE 0777
 
 typedef struct command{
     int requests;
     int maxTime;
     char timeUnit;
-}COMMAND;
+} COMMAND;
+
+typedef struct request_info{
+    int serial_num;
+    char gender;
+    float time;
+} INFO;
+
+/*typedef struct fifos_fds{
+    int requests;
+
+}*/
 
 int DEBUG = 0;
 
@@ -36,17 +53,67 @@ void argumentHandling(int argc, char*argv[], COMMAND *command){
     }
 }
 
+void initCommunications(int * fifos_fds){
 
-void cenaNova(){
-    printf("teste\n");
+    /* Creates FIFO's "entrada" e "rejeitados" */
+
+    if(mkfifo("/tmp/entrada", OP_MODE) < 0){
+        perror("Couldn't create FIFO '/tmp/entrada' ");
+        exit(EXIT_FAILURE);
+    }
+
+    if(mkfifo("/tmp/rejeitados", OP_MODE) < 0){
+        perror("Couldn't create FIFO '/tmp/rejeitados' ");
+        exit(EXIT_FAILURE);
+    }
+
+
+    if((fifos_fds[0] = open("/tmp/entrada", O_WRONLY)) < 0){
+        perror("Couldn't open FIFO '/tmp/entrada' ");
+        exit(EXIT_FAILURE); 
+    }
+
+    if((fifos_fds[1] = open("/tmp/rejeitados", O_RDONLY)) < 0){
+        perror("Couldn't open FIFO '/tmp/rejeitados' ");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void closeCommunications(int * fifos_fds){
+
+    if(close(fifos_fds[0]) < 0){
+        perror("Couldn't close '/tmp/entrada' ");
+        exit(EXIT_FAILURE);
+    }
+
+    if(close(fifos_fds[1]) < 0){
+        perror("Couldn't close '/tmp/rejeitados' ");
+        exit(EXIT_FAILURE);
+    }
+
+    if(unlink("/tmp/entrada") < 0){
+        perror("Unlinking '/tmp/entrada' error ");
+        exit(EXIT_FAILURE);
+    }
+
+    if(unlink("/tmp/rejeitados") < 0){
+        perror("Unlinking '/tmp/rejeitados' error ");
+        exit(EXIT_FAILURE);
+    }
 }
 
 int main(int argc, char *argv[]){
+    int fifos_fds[2];
     COMMAND command;
     memset(&command,0,sizeof(struct command));
 
     argumentHandling(argc, argv, &command);
     
+    initCommunications(fifos_fds);
 
-    cenaNova();
+    printf("%d", fifos_fds[0]);
+
+    closeCommunications(fifos_fds);
+
+    return 0;
 }
