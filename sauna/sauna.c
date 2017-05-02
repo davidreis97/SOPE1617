@@ -2,11 +2,23 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+#define OP_MODE 0777
 
 typedef struct command{
     int slots;
     char timeUnit;
 }COMMAND;
+
+typedef struct fileDescriptors{
+    int fifo_requests;
+    int fifo_rejected;
+    int file_info;
+} fileDescriptors;
 
 int DEBUG = 0;
 
@@ -29,11 +41,56 @@ void argumentHandling(int argc, char*argv[], COMMAND *command){
     }
 }
 
+void initCommunications(fileDescriptors* fds){
+
+	char filename[20];
+    sprintf(filename, "/tmp/bal.%d", getpid());
+
+    if((fds->file_info = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
+    	perror("Couldn't create file_info ");
+        exit(EXIT_FAILURE);
+    }
+
+	if((fds->fifo_requests = open("/tmp/entrada", O_RDONLY))< 0){
+		perror("Couldn't open FIFO '/tmp/entrada' ");
+		exit(EXIT_FAILURE);
+	}
+
+	if((fds->fifo_rejected = open("/tmp/rejeitados", O_WRONLY)) < 0){
+        perror("Couldn't open FIFO '/tmp/rejeitados' ");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void closeCommunications(fileDescriptors* fds){
+
+	if(close(fds->file_info) < 0){
+		perror("Couldn't close file_info ");
+		exit(EXIT_FAILURE);
+	}
+
+    if(close(fds->fifo_requests) < 0){
+        perror("Couldn't close '/tmp/entrada' ");
+        exit(EXIT_FAILURE);
+    }
+
+    if(close(fds->fifo_rejected) < 0){
+        perror("Couldn't close '/tmp/rejeitados' ");
+        exit(EXIT_FAILURE);
+    }
+}
+
 
 int main(int argc, char *argv[]){
+	fileDescriptors fds;
     COMMAND command;
+
     memset(&command,0,sizeof(struct command));
 
     argumentHandling(argc, argv, &command);
+
+    initCommunications(&fds);
+
+    closeCommunications(&fds);
 
 }
