@@ -157,7 +157,7 @@ int main(int argc, char *argv[]){
     COMMAND command;
     memset(&command,0,sizeof(struct command));
 
-    argumentHandling(argc, argv, &command);
+    argumentHandling(argc, argv);
     
     initCommunications(&fds);
 
