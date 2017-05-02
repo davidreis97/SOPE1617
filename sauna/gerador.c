@@ -19,12 +19,17 @@ typedef struct request_info{
     int serial_num;
     char gender;
     float time;
-} INFO;
+} REQUEST;
 
-/*typedef struct fifos_fds{
-    int requests;
+typedef struct fileDescriptors{
+    int fifo_requests;
+    int fifo_rejected;
+    int file_info;
+} fileDescriptors;
 
-}*/
+int requestsProcessed = 0;
+
+REQUEST* requestsQueue;
 
 int DEBUG = 0;
 
@@ -53,7 +58,16 @@ void argumentHandling(int argc, char*argv[], COMMAND *command){
     }
 }
 
-void initCommunications(int * fifos_fds){
+void initCommunications(fileDescriptors* fds){
+
+    char filename[20];
+    
+    sprintf(filename, "/tmp/ger.%d", getpid());
+
+    if((fds->file_info = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
+        perror("Couldn't create file_info ");
+        exit(EXIT_FAILURE);
+    }
 
     /* Creates FIFO's "entrada" e "rejeitados" */
 
@@ -68,25 +82,31 @@ void initCommunications(int * fifos_fds){
     }
 
 
-    if((fifos_fds[0] = open("/tmp/entrada", O_WRONLY)) < 0){
+    if((fds->fifo_requests = open("/tmp/entrada", O_WRONLY)) < 0){
         perror("Couldn't open FIFO '/tmp/entrada' ");
         exit(EXIT_FAILURE); 
     }
 
-    if((fifos_fds[1] = open("/tmp/rejeitados", O_RDONLY)) < 0){
+    if((fds->fifo_rejected = open("/tmp/rejeitados", O_RDONLY)) < 0){
         perror("Couldn't open FIFO '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
+
 }
 
-void closeCommunications(int * fifos_fds){
+void closeCommunications(fileDescriptors* fds){
 
-    if(close(fifos_fds[0]) < 0){
+    if(close(fds->file_info) < 0){
+        perror("Couldn't close file ");
+        exit(EXIT_FAILURE);
+    }
+
+    if(close(fds->fifo_requests) < 0){
         perror("Couldn't close '/tmp/entrada' ");
         exit(EXIT_FAILURE);
     }
 
-    if(close(fifos_fds[1]) < 0){
+    if(close(fds->fifo_rejected) < 0){
         perror("Couldn't close '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
@@ -102,18 +122,29 @@ void closeCommunications(int * fifos_fds){
     }
 }
 
+void runCommunications(fileDescriptors* fds, COMMAND* command){
+
+    /*while(requestsProcessed < command->request){
+
+    }*/
+}
+
 int main(int argc, char *argv[]){
-    int fifos_fds[2];
+
+    fileDescriptors fds;
+
     COMMAND command;
     memset(&command,0,sizeof(struct command));
 
     argumentHandling(argc, argv, &command);
     
-    initCommunications(fifos_fds);
+    initCommunications(&fds);
 
-    printf("%d", fifos_fds[0]);
+    runCommunications(&fds, &command);
 
-    closeCommunications(fifos_fds);
+    printf("%d", fds.file_info);
+
+    closeCommunications(&fds);
 
     return 0;
 }
