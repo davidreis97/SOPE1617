@@ -7,15 +7,18 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#define OP_MODE 0777
+
 typedef struct command{
     int slots;
     char timeUnit;
 }COMMAND;
 
-/*typedef struct fifos_fds{
-	int requests;
-	int rejected;		//fifos_fds perhaps is not the best option, maybe creating a struct with the two 
-} FIFO;*/				// fifos fds is a beeter option? 	
+typedef struct fileDescriptors{
+    int fifo_requests;
+    int fifo_rejected;
+    int file_info;
+} fileDescriptors;
 
 int DEBUG = 0;
 
@@ -38,27 +41,40 @@ void argumentHandling(int argc, char*argv[], COMMAND *command){
     }
 }
 
-void initCommunications(int * fifos_fds){
+void initCommunications(fileDescriptors* fds){
 
-	if((fifos_fds[0] = open("/tmp/entrada", O_RDONLY))< 0){
+	char filename[20];
+    sprintf(filename, "/tmp/bal.%d", getpid());
+
+    if((fds->file_info = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
+    	perror("Couldn't create file_info ");
+        exit(EXIT_FAILURE);
+    }
+
+	if((fds->fifo_requests = open("/tmp/entrada", O_RDONLY))< 0){
 		perror("Couldn't open FIFO '/tmp/entrada' ");
 		exit(EXIT_FAILURE);
 	}
 
-	if((fifos_fds[1] = open("/tmp/rejeitados", O_WRONLY)) < 0){
+	if((fds->fifo_rejected = open("/tmp/rejeitados", O_WRONLY)) < 0){
         perror("Couldn't open FIFO '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
 }
 
-void closeCommunications(int * fifos_fds){
+void closeCommunications(fileDescriptors* fds){
 
-    if(close(fifos_fds[0]) < 0){
+	if(close(fds->file_info) < 0){
+		perror("Couldn't close file_info ");
+		exit(EXIT_FAILURE);
+	}
+
+    if(close(fds->fifo_requests) < 0){
         perror("Couldn't close '/tmp/entrada' ");
         exit(EXIT_FAILURE);
     }
 
-    if(close(fifos_fds[1]) < 0){
+    if(close(fds->fifo_rejected) < 0){
         perror("Couldn't close '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
@@ -66,15 +82,15 @@ void closeCommunications(int * fifos_fds){
 
 
 int main(int argc, char *argv[]){
-	int fifos_fds[2];
+	fileDescriptors fds;
     COMMAND command;
 
     memset(&command,0,sizeof(struct command));
 
     argumentHandling(argc, argv, &command);
 
-    initCommunications(fifos_fds);
+    initCommunications(&fds);
 
-    closeCommunications(fifos_fds);
+    closeCommunications(&fds);
 
 }

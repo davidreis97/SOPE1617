@@ -61,7 +61,7 @@ void argumentHandling(int argc, char*argv[], COMMAND *command){
 void initCommunications(fileDescriptors* fds){
 
     char filename[20];
-    
+
     sprintf(filename, "/tmp/ger.%d", getpid());
 
     if((fds->file_info = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
@@ -141,8 +141,6 @@ int main(int argc, char *argv[]){
     initCommunications(&fds);
 
     runCommunications(&fds, &command);
-
-    printf("%d", fds.file_info);
 
     closeCommunications(&fds);
 
