@@ -3,18 +3,55 @@
 #include "queue.h"
 
 /*
-*	Very basic implementation of a FIFO queue.
+*	Very basic implementation of a FIFO queue with possibility of mutex usage for synchronization. Designed for SOPE 16/17
+*	TODO:
+*	- Better mutex implementation
+*   - Function for random insertion
 */
 
-//SECCAO CRITICA
-void queue_push(int value, QUEUE *q){
+void queueMutexPush(void *data, QUEUE *q, pthread_mutex_t *mut){
+    
+    if(pthread_mutex_lock(mut)){
+    	perror("MUTEX LOCK ERROR");
+    	exit(1);
+    }
+    
+    queuePush(data, q);
+    
+    if(pthread_mutex_unlock(mut)){
+    	perror("MUTEX LOCK ERROR");
+    	exit(1);
+    }
+}
+
+void * queueMutexPop(QUEUE *q, pthread_mutex_t *mut){
+	void * temp;
+
+    if(pthread_mutex_lock(mut)){
+    	perror("MUTEX LOCK ERROR");
+    	exit(1);
+    }
+    
+    temp = queuePop(q);
+    
+    if(pthread_mutex_unlock(mut)){
+    	perror("MUTEX LOCK ERROR");
+    	exit(1);
+    }
+    
+    return temp;
+}
+
+void queuePush(void * data, QUEUE *q){
 	QNODE *qn = malloc(sizeof(struct qnode));
 	
 	qn->previous = q->last;
 	qn->next = NULL;
-	qn->value = value;
+	qn->data = data;
+
+	if (q->last != NULL) 
+		q->last->next = qn;
 	
-	q->last->next = qn;
 	q->last = qn;
 
 	if(q->first == NULL){
@@ -22,15 +59,15 @@ void queue_push(int value, QUEUE *q){
 	}
 }
 
-//SECCAO CRITICA
-int queue_pop(QUEUE *q){
+void *queuePop(QUEUE *q){
 	
 	if(q->first == NULL){
-		fprintf(stderr,"ERROR! Cannot pop empty queue\n");
+		fprintf(stderr,"QUEUE ERROR! Cannot pop empty queue.\n");
 		exit(1);
 	}
 	
-	int temp_value = q->first->value;
+	void *temp_data = q->first->data;
+	
 
 	if(q->first == q->last){
 		free(q->first);
@@ -42,24 +79,61 @@ int queue_pop(QUEUE *q){
 		q->first->previous = NULL;
 	}
 
-	return temp_value;
+	return temp_data;
 }
 
-void queue_free(QUEUE *q){
+void queueFree(QUEUE *q){
 	QNODE *qn = q->first;
+	
 	while (qn != NULL){
 		QNODE *temp = qn->next;
+		if (q->dynamic) 
+			free(qn->data);
 		free(qn);
 		qn = temp;
+	
 	}
+	q->first = NULL;
+	q->last = NULL;
 }
 
-void queue_print(QUEUE *q){
-	QNODE *qn = q->first;
-	printf("Queue: ");
-	while(qn != NULL){
-		printf("%d ",qn->value);
-		qn = qn->next;
+void queueMutexFree(QUEUE *q, pthread_mutex_t *mut){
+	
+	if(pthread_mutex_lock(mut)){
+    	perror("MUTEX LOCK ERROR");
+    	exit(1);
+    }
+	
+	queueFree(q);
+	
+	if(pthread_mutex_unlock(mut)){
+    	perror("MUTEX LOCK ERROR");
+    	exit(1);
+    }
+}
+
+int queueIsEmpty(QUEUE *q){
+	if(q->first == NULL){
+		return 1;
+	}else{
+		return 0;
 	}
-	printf("\n");
+} 
+
+int queueMutexIsEmpty(QUEUE *q, pthread_mutex_t *mut){
+	int temp = 0;
+
+	if(pthread_mutex_lock(mut)){
+    	perror("MUTEX LOCK ERROR");
+    	exit(1);
+    }
+	
+	temp = queueIsEmpty(q);
+	
+	if(pthread_mutex_unlock(mut)){
+    	perror("MUTEX LOCK ERROR");
+    	exit(1);
+    }
+
+    return temp;
 }

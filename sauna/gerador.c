@@ -7,10 +7,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "queue.h"
-
-#define OP_MODE 0777
-#define WRITE 1
-#define READ 0
+#include "constants.h"
+#include <pthread.h>
 
 typedef struct command{
     int requests;
@@ -18,25 +16,13 @@ typedef struct command{
     char timeUnit;
 } COMMAND;
 
-typedef struct request_info{
-    int serial_num;
-    char gender;
-    float time;
-} REQUEST;
-
-typedef struct fileDescriptors{
-    int fifo_requests;
-    int fifo_rejected;
-    int file_info;
-} fileDescriptors;
-
-int requestsProcessed = 0;
-
-REQUEST* requestsQueue;
-
 COMMAND command;
 
-QUEUE queue;
+FILEDESCRIPTORS fds;
+
+QUEUE requests;
+
+pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
 
 int DEBUG = 0;
 
@@ -65,27 +51,13 @@ void argumentHandling(int argc, char*argv[]){
     }
 }
 
-void queue_mutex_push(int value){
-    //lock
-    queue_push(value, &queue);
-    //unlock
-}
-
-int queue_mutex_pop(){
-    int temp;
-    //lock
-    temp = queue_pop(&queue);
-    //unlock
-    return temp;
-}
-
-void initCommunications(fileDescriptors* fds){
+void initCommunications(){
 
     char filename[20];
 
     sprintf(filename, "/tmp/ger.%d", getpid());
 
-    if((fds->file_info = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
+    if((fds.fileLog = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
         perror("Couldn't create file_info ");
         exit(EXIT_FAILURE);
     }
@@ -103,31 +75,31 @@ void initCommunications(fileDescriptors* fds){
     }
 
 
-    if((fds->fifo_requests = open("/tmp/entrada", O_WRONLY)) < 0){
+    if((fds.fifoRequests = open("/tmp/entrada", O_WRONLY)) < 0){
         perror("Couldn't open FIFO '/tmp/entrada' ");
         exit(EXIT_FAILURE); 
     }
 
-    if((fds->fifo_rejected = open("/tmp/rejeitados", O_RDONLY)) < 0){
+    if((fds.fifoRejected = open("/tmp/rejeitados", O_RDONLY)) < 0){
         perror("Couldn't open FIFO '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
 
 }
 
-void closeCommunications(fileDescriptors* fds){
+void closeCommunications(){
 
-    if(close(fds->file_info) < 0){
+    if(close(fds.fileLog) < 0){
         perror("Couldn't close file ");
         exit(EXIT_FAILURE);
     }
 
-    if(close(fds->fifo_requests) < 0){
+    if(close(fds.fifoRequests) < 0){
         perror("Couldn't close '/tmp/entrada' ");
         exit(EXIT_FAILURE);
     }
 
-    if(close(fds->fifo_rejected) < 0){
+    if(close(fds.fifoRejected) < 0){
         perror("Couldn't close '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
@@ -143,27 +115,80 @@ void closeCommunications(fileDescriptors* fds){
     }
 }
 
-void runCommunications(fileDescriptors* fds, COMMAND* command){
+void sendRequests(){
+    char message[512];
 
-    /*while(requestsProcessed < command->request){
+    time_t rawtime;
+    struct tm * timeinfo;
 
-    }*/
+    time (&rawtime);
+    timeinfo = localtime (&rawtime); 
+    
+    while (!queueMutexIsEmpty(&requests,&requestsMutex)){
+        REQUEST *req = (REQUEST *)queueMutexPop(&requests, &requestsMutex);
+
+        sprintf(message,"%s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
+        printf("SENT REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
+        write(fds.fileLog, message, sizeof(char)*512);
+
+        //write(fds.fifoRequests, &req, sizeof(struct request_info));
+
+        //queueMutex structure we designed is responsible for freeing all alocated resources when queueFree or queueMutexFree is called, but not when the resource is popped. That is the responsible of the caller, no matter what the value of queueMutex->dynamic is.
+        free(req);
+    }
+}
+
+void generateRequests(){
+    int serialNum = 0;
+
+    time_t rawtime;
+    struct tm * timeinfo;
+
+    time (&rawtime);
+    timeinfo = localtime (&rawtime); 
+    
+    while (command.requests > 0) {
+        REQUEST *req = malloc(sizeof(struct request_info));
+        if(rand()%2 == 0)
+            req->gender = 'F';
+        else
+            req->gender = 'M';
+        req->serialNum = serialNum;
+        req->rejections = 0;
+        req->time = rand()%command.maxTime;
+        
+        queueMutexPush(req, &requests, &requestsMutex); //Sends this request to the bottom of the queueMutex
+
+        serialNum++;
+        command.requests--;
+
+        printf("GENERATED REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
+    }
+}
+
+void startRejectionHandler(){
+    
 }
 
 int main(int argc, char *argv[]){
 
-    fileDescriptors fds;
+    srand(time(NULL));
 
-    COMMAND command;
-    memset(&command,0,sizeof(struct command));
+    requests.dynamic = 1;
 
     argumentHandling(argc, argv);
     
-    initCommunications(&fds);
+    initCommunications();
 
-    runCommunications(&fds, &command);
+    startRejectionHandler();
 
-    closeCommunications(&fds);
+    generateRequests();
+
+    sendRequests();
+
+    closeCommunications();
+
+    queueMutexFree(&requests, &requestsMutex);
 
     return 0;
 }
