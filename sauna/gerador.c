@@ -4,6 +4,7 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "queue.h"
@@ -15,7 +16,11 @@ typedef struct command{
     int maxTime;
 } COMMAND;
 
+COMMAND command;
+
 FILEDESCRIPTORS fds;
+
+QUEUE requests;
 
 pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -103,10 +108,27 @@ void closeCommunications(){
     }
 }
 
-void runCommunications(fileDescriptors* fds){
+void sendRequests(){
+    char message[512];
 
-    //-----------------------------
+    time_t rawtime;
+    struct tm * timeinfo;
 
+    time (&rawtime);
+    timeinfo = localtime (&rawtime); 
+    
+    while (!queueMutexIsEmpty(&requests,&requestsMutex)){
+        REQUEST *req = (REQUEST *)queueMutexPop(&requests, &requestsMutex);
+
+        sprintf(message,"%s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
+        printf("SENT REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
+        write(fds.fileLog, message, sizeof(char)*512);
+
+        //write(fds.fifoRequests, &req, sizeof(struct request_info));
+
+        //queueMutex structure we designed is responsible for freeing all alocated resources when queueFree or queueMutexFree is called, but not when the resource is popped. That is the responsible of the caller, no matter what the value of queueMutex->dynamic is.
+        free(req);
+    }
 }
 
 void generateRequests(){
@@ -139,19 +161,28 @@ void generateRequests(){
 
 void startRejectionHandler(){
     
+
+}
+
+void runCommunications(){
+
+    //-----------------------------
+
 }
 
 int main(int argc, char *argv[]){
 
     srand(time(NULL));
 
+    requests.dynamic = 1;
+    
     memset(&command,0,sizeof(struct command));
 
     argumentHandling(argc, argv);
     
     initCommunications();
 
-    runCommunications(&fds);
+    startRejectionHandler();
 
     generateRequests();
 
