@@ -4,6 +4,7 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "queue.h"
@@ -15,13 +16,13 @@
 typedef struct command{
     int requests;
     int maxTime;
-    char timeUnit;
 } COMMAND;
 
 typedef struct request_info{
     int serial_num;
     char gender;
     float time;
+    //int rejections;   if == 3; delete
 } REQUEST;
 
 typedef struct fileDescriptors{
@@ -30,7 +31,7 @@ typedef struct fileDescriptors{
     int file_info;
 } fileDescriptors;
 
-int requestsProcessed = 0;
+int requestsToProcess = 0;
 
 REQUEST* requestsQueue;
 
@@ -42,7 +43,7 @@ int DEBUG = 0;
 
 void argumentHandling(int argc, char*argv[]){    
     if (argc != 4){
-        printf("Usage: %s <requests> <max. time> <time unit>\n",argv[0]);
+        printf("Usage: %s <requests> <max. time>\n",argv[0]);
         exit(1);
     }
 
@@ -58,11 +59,7 @@ void argumentHandling(int argc, char*argv[]){
          fprintf(stderr, "Error! Maximum time must be a positive integer.\n");
     }
 
-    command.timeUnit = argv[3][0];
-
-    if (strlen(argv[3]) != 1 || (argv[3][0] != 's' && argv[3][0] != 'm' && argv[3][0] != 'u')){
-        fprintf(stderr, "Error! '%s' is not a valid time unit.\n[s- seconds / m- milliseconds / u- microseconds]\n",argv[3]);
-    }
+    requestsToProcess = command.requests;
 }
 
 void queue_mutex_push(int value){
@@ -82,7 +79,6 @@ int queue_mutex_pop(){
 void initCommunications(fileDescriptors* fds){
 
     char filename[20];
-
     sprintf(filename, "/tmp/ger.%d", getpid());
 
     if((fds->file_info = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
@@ -143,25 +139,23 @@ void closeCommunications(fileDescriptors* fds){
     }
 }
 
-void runCommunications(fileDescriptors* fds, COMMAND* command){
+void runCommunications(fileDescriptors* fds){
 
-    /*while(requestsProcessed < command->request){
+    //-----------------------------
 
-    }*/
 }
 
 int main(int argc, char *argv[]){
 
     fileDescriptors fds;
 
-    COMMAND command;
     memset(&command,0,sizeof(struct command));
 
     argumentHandling(argc, argv);
     
     initCommunications(&fds);
 
-    runCommunications(&fds, &command);
+    runCommunications(&fds);
 
     closeCommunications(&fds);
 
