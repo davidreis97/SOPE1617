@@ -13,14 +13,9 @@
 typedef struct command{
     int requests;
     int maxTime;
-    char timeUnit;
 } COMMAND;
 
-COMMAND command;
-
 FILEDESCRIPTORS fds;
-
-QUEUE requests;
 
 pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -28,7 +23,7 @@ int DEBUG = 0;
 
 void argumentHandling(int argc, char*argv[]){    
     if (argc != 4){
-        printf("Usage: %s <requests> <max. time> <time unit>\n",argv[0]);
+        printf("Usage: %s <requests> <max. time>\n",argv[0]);
         exit(1);
     }
 
@@ -43,18 +38,11 @@ void argumentHandling(int argc, char*argv[]){
     if(command.maxTime <= 0){
          fprintf(stderr, "Error! Maximum time must be a positive integer.\n");
     }
-
-    command.timeUnit = argv[3][0];
-
-    if (strlen(argv[3]) != 1 || (argv[3][0] != 's' && argv[3][0] != 'm' && argv[3][0] != 'u')){
-        fprintf(stderr, "Error! '%s' is not a valid time unit.\n[s- seconds / m- milliseconds / u- microseconds]\n",argv[3]);
-    }
 }
 
 void initCommunications(){
 
     char filename[20];
-
     sprintf(filename, "/tmp/ger.%d", getpid());
 
     if((fds.fileLog = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
@@ -115,27 +103,10 @@ void closeCommunications(){
     }
 }
 
-void sendRequests(){
-    char message[512];
+void runCommunications(fileDescriptors* fds){
 
-    time_t rawtime;
-    struct tm * timeinfo;
+    //-----------------------------
 
-    time (&rawtime);
-    timeinfo = localtime (&rawtime); 
-    
-    while (!queueMutexIsEmpty(&requests,&requestsMutex)){
-        REQUEST *req = (REQUEST *)queueMutexPop(&requests, &requestsMutex);
-
-        sprintf(message,"%s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
-        printf("SENT REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
-        write(fds.fileLog, message, sizeof(char)*512);
-
-        //write(fds.fifoRequests, &req, sizeof(struct request_info));
-
-        //queueMutex structure we designed is responsible for freeing all alocated resources when queueFree or queueMutexFree is called, but not when the resource is popped. That is the responsible of the caller, no matter what the value of queueMutex->dynamic is.
-        free(req);
-    }
 }
 
 void generateRequests(){
@@ -174,13 +145,13 @@ int main(int argc, char *argv[]){
 
     srand(time(NULL));
 
-    requests.dynamic = 1;
+    memset(&command,0,sizeof(struct command));
 
     argumentHandling(argc, argv);
     
     initCommunications();
 
-    startRejectionHandler();
+    runCommunications(&fds);
 
     generateRequests();
 
