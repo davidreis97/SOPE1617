@@ -3,10 +3,8 @@
 #include "queue.h"
 
 /*
-*	Very basic implementation of a FIFO queue with possibility of mutex usage for synchronization. Designed for SOPE 16/17
-*	TODO:
-*	- Better mutex implementation
-*   - Function for random insertion
+*	Very basic implementation of a FIFO queue with possibility of mutex usage for synchronization.
+*   (It's just a linked list with shortcuts to the first and last element and push and pop functions that match the desired functionality of a queue.)
 */
 
 void queueMutexPush(void *data, QUEUE *q, pthread_mutex_t *mut){

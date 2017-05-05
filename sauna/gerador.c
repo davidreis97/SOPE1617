@@ -27,7 +27,7 @@ pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
 int DEBUG = 0;
 
 void argumentHandling(int argc, char*argv[]){    
-    if (argc != 4){
+    if (argc != 3){
         printf("Usage: %s <requests> <max. time>\n",argv[0]);
         exit(1);
     }
@@ -124,7 +124,7 @@ void sendRequests(){
         printf("SENT REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
         write(fds.fileLog, message, sizeof(char)*512);
 
-        //write(fds.fifoRequests, &req, sizeof(struct request_info));
+        write(fds.fifoRequests, &req, sizeof(struct request_info));
 
         //queueMutex structure we designed is responsible for freeing all alocated resources when queueFree or queueMutexFree is called, but not when the resource is popped. That is the responsible of the caller, no matter what the value of queueMutex->dynamic is.
         free(req);

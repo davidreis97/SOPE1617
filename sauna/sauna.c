@@ -9,11 +9,8 @@
 #include "constants.h"
 #include "queue.h"
 
-#define OP_MODE 0777
-
 typedef struct command{
     int slots;
-    char timeUnit;
 }COMMAND;
 
 int DEBUG = 0;
@@ -22,11 +19,15 @@ COMMAND command;
 
 FILEDESCRIPTORS fds;
 
+pthread_mutex_t slotsMutex = PTHREAD_MUTEX_INITIALIZER;
+
+int slotsAvailable;
+
 QUEUE threads;
 
 void argumentHandling(int argc, char*argv[]){    
-    if (argc != 3){
-        printf("Usage: %s <slots> <time unit>\n",argv[0]);
+    if (argc != 2){
+        printf("Usage: %s <slots>\n",argv[0]);
         exit(1);
     }
 
@@ -36,11 +37,6 @@ void argumentHandling(int argc, char*argv[]){
          fprintf(stderr, "Error! Number of requests must be a positive integer.\n");
     }
 
-    command.timeUnit = argv[2][0];
-
-    if (strlen(argv[2]) != 1 || (argv[2][0] != 's' && argv[2][0] != 'm' && argv[2][0] != 'u')){
-        fprintf(stderr, "Error! '%s' is not a valid time unit.\n[s- seconds / m- milliseconds / u- microseconds]\n",argv[2]);
-    }
 }
 
 void initCommunications(){
@@ -66,8 +62,66 @@ void initCommunications(){
 
 }
 
-void startListener(){
+void *processUser(void *arg){
+    int *time = (int *)arg;
 
+    printf("%d\n",*time);
+    sleep(*time);
+
+    if(pthread_mutex_lock(&slotsMutex)){
+        perror("MUTEX LOCK ERROR");
+        exit(1);
+    }
+
+    slotsAvailable++;
+
+    if(pthread_mutex_unlock(&slotsMutex)){
+        perror("MUTEX LOCK ERROR");
+        exit(1);
+    }
+
+    return NULL;
+}
+
+void startListener(){
+    slotsAvailable = command.slots;
+    char currGender;
+    REQUEST req;
+    while(read(fds.fifoRequests,&req,sizeof(struct request_info))){        
+        if (currGender != req.gender && slotsAvailable != command.slots){
+            //write(fds.fifoRejected,&req,sizeof(struct request_info));
+        }else{
+            currGender = req.gender;
+            pthread_t *tid = malloc(sizeof(pthread_t));
+            int time = req.time;
+            
+            while(slotsAvailable <= 0);
+
+
+            if(pthread_mutex_lock(&slotsMutex)){
+                perror("MUTEX LOCK ERROR");
+                exit(1);
+            }
+
+            slotsAvailable--;
+
+            if(pthread_mutex_unlock(&slotsMutex)){
+                perror("MUTEX LOCK ERROR");
+                exit(1);
+            }
+
+            pthread_create(tid, NULL, processUser, &time);
+
+            queuePush(tid,&threads);
+        }
+    }
+
+    while(!queueIsEmpty(&threads)){
+        pthread_t *tid = (pthread_t *) queuePop(&threads);
+        printf("Tirado: %d\n",*tid);
+        pthread_join(*tid, NULL);
+        free(tid);
+    }
 }
 
 void closeCommunications(){
@@ -92,7 +146,7 @@ void closeCommunications(){
 int main(int argc, char *argv[]){
     memset(&command,0,sizeof(struct command));
 
-    threads.dynamic = 0; //Pode ter de ser alterado.
+    threads.dynamic = 1;
 
     argumentHandling(argc, argv);
 
@@ -102,4 +156,5 @@ int main(int argc, char *argv[]){
 
     closeCommunications();
 
+    queueFree(&threads);
 }
