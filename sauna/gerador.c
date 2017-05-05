@@ -24,6 +24,20 @@ QUEUE requests;
 
 pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
 
+void* rejectionHandler(void* arg){
+
+    REQUEST* req = malloc(sizeof(struct request_info));
+
+    while(read(fds.fifoRejected, req, sizeof(struct request_info))){
+        if(req.rejections == 3){
+            continue;
+        }
+        else{
+            queueMutexPush(req, &requests, &requestsMutex);
+        }
+    }
+}
+
 int DEBUG = 0;
 
 void argumentHandling(int argc, char*argv[]){    
@@ -159,8 +173,12 @@ void generateRequests(){
     }
 }
 
-void startRejectionHandler(){
-    
+void startRejectionHandler(pthread_t* tid){
+
+
+    pthread_create(tid, NULL, rejectionHandler, NULL);
+
+
 
 }
 
@@ -172,6 +190,8 @@ void runCommunications(){
 
 int main(int argc, char *argv[]){
 
+    pthread_t tid;
+
     srand(time(NULL));
 
     requests.dynamic = 1;
@@ -182,7 +202,7 @@ int main(int argc, char *argv[]){
     
     initCommunications();
 
-    startRejectionHandler();
+    startRejectionHandler(&tid);
 
     generateRequests();
 
@@ -190,6 +210,8 @@ int main(int argc, char *argv[]){
 
     closeCommunications();
 
+    pthread_join(tid, NULL);
+    
     queueMutexFree(&requests, &requestsMutex);
 
     return 0;
