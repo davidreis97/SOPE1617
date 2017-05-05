@@ -138,7 +138,7 @@ void sendRequests(){
         printf("SENT REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
         write(fds.fileLog, message, sizeof(char)*512);
 
-        write(fds.fifoRequests, &req, sizeof(struct request_info));
+        write(fds.fifoRequests, req, sizeof(struct request_info));
 
         //queueMutex structure we designed is responsible for freeing all alocated resources when queueFree or queueMutexFree is called, but not when the resource is popped. That is the responsible of the caller, no matter what the value of queueMutex->dynamic is.
         free(req);
@@ -162,7 +162,7 @@ void generateRequests(){
             req->gender = 'M';
         req->serialNum = serialNum;
         req->rejections = 0;
-        req->time = rand()%command.maxTime;
+        req->time = 1 + rand()%command.maxTime;
         
         queueMutexPush(req, &requests, &requestsMutex); //Sends this request to the bottom of the queueMutex
 
@@ -179,12 +179,6 @@ void startRejectionHandler(pthread_t* tid){
     pthread_create(tid, NULL, rejectionHandler, NULL);
 
 
-
-}
-
-void runCommunications(){
-
-    //-----------------------------
 
 }
 

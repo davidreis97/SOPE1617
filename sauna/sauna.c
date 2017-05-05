@@ -80,23 +80,28 @@ void *processUser(void *arg){
         exit(1);
     }
 
+    free(time);
+
     return NULL;
 }
 
 void startListener(){
-    slotsAvailable = command.slots;
     char currGender;
     REQUEST req;
+
+    slotsAvailable = command.slots;
+    
     while(read(fds.fifoRequests,&req,sizeof(struct request_info))){        
         if (currGender != req.gender && slotsAvailable != command.slots){
             //write(fds.fifoRejected,&req,sizeof(struct request_info));
         }else{
             currGender = req.gender;
             pthread_t *tid = malloc(sizeof(pthread_t));
-            int time = req.time;
+            int *time = malloc(sizeof(int));
+
+            printf("REQUEST: %c / %d\n",req.gender,req.time);
             
             while(slotsAvailable <= 0);
-
 
             if(pthread_mutex_lock(&slotsMutex)){
                 perror("MUTEX LOCK ERROR");
@@ -110,7 +115,8 @@ void startListener(){
                 exit(1);
             }
 
-            pthread_create(tid, NULL, processUser, &time);
+            *time = req.time;
+            pthread_create(tid, NULL, processUser, time);
 
             queuePush(tid,&threads);
         }
@@ -118,7 +124,6 @@ void startListener(){
 
     while(!queueIsEmpty(&threads)){
         pthread_t *tid = (pthread_t *) queuePop(&threads);
-        printf("Tirado: %d\n",*tid);
         pthread_join(*tid, NULL);
         free(tid);
     }
