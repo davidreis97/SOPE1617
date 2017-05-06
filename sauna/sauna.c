@@ -93,7 +93,7 @@ void startListener(){
     
     while(read(fds.fifoRequests,&req,sizeof(struct request_info))){        
         if (currGender != req.gender && slotsAvailable != command.slots){
-            //write(fds.fifoRejected,&req,sizeof(struct request_info));
+            write(fds.fifoRejected,&req,sizeof(struct request_info));
         }else{
             currGender = req.gender;
             pthread_t *tid = malloc(sizeof(pthread_t));

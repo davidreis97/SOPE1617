@@ -22,20 +22,44 @@ FILEDESCRIPTORS fds;
 
 QUEUE requests;
 
+int threadCompleted = 0;
+
 pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
 
 void* rejectionHandler(void* arg){
 
-    REQUEST* req = malloc(sizeof(struct request_info));
+    REQUEST temp;
+    int i = 0;
 
-    while(read(fds.fifoRejected, req, sizeof(struct request_info))){
-        if(req.rejections == 3){
-            continue;
+    while((i = read(fds.fifoRejected, &temp, sizeof(struct request_info)))){
+        if(i == -1){
+            printf("File Desc: %d",fds.fifoRejected);
+            perror("READ ERROR");
+            pthread_exit(NULL);
+        }
+
+        REQUEST* req = malloc(sizeof(struct request_info));
+
+        *req = temp;
+
+        printf("Read %d bytes from %d\n",i,fds.fifoRejected);
+
+        if(req->rejections >= 3){
+            printf("Rejecting %d\n",req->serialNum);
+            free(req);
         }
         else{
+            req->rejections++;
+            printf("Retrying\n");
             queueMutexPush(req, &requests, &requestsMutex);
         }
     }
+
+
+    printf("Exiting thread");
+    threadCompleted = 1;
+
+    return NULL;
 }
 
 int DEBUG = 0;
@@ -131,17 +155,18 @@ void sendRequests(){
     time (&rawtime);
     timeinfo = localtime (&rawtime); 
     
-    while (!queueMutexIsEmpty(&requests,&requestsMutex)){
-        REQUEST *req = (REQUEST *)queueMutexPop(&requests, &requestsMutex);
+    while(!threadCompleted){
+        while(!queueMutexIsEmpty(&requests,&requestsMutex)){
+            REQUEST *req = (REQUEST *)queueMutexPop(&requests, &requestsMutex);
 
-        sprintf(message,"%s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
-        printf("SENT REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
-        write(fds.fileLog, message, sizeof(char)*512);
+            sprintf(message,"%s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
+            printf("SENT REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
+            write(fds.fileLog, message, sizeof(char)*512);
 
-        write(fds.fifoRequests, req, sizeof(struct request_info));
+            write(fds.fifoRequests, req, sizeof(struct request_info));
 
-        //queueMutex structure we designed is responsible for freeing all alocated resources when queueFree or queueMutexFree is called, but not when the resource is popped. That is the responsible of the caller, no matter what the value of queueMutex->dynamic is.
-        free(req);
+            free(req);
+        }
     }
 }
 
@@ -174,13 +199,10 @@ void generateRequests(){
 }
 
 void startRejectionHandler(pthread_t* tid){
-
-
     pthread_create(tid, NULL, rejectionHandler, NULL);
-
-
-
 }
+
+
 
 int main(int argc, char *argv[]){
 
@@ -203,9 +225,9 @@ int main(int argc, char *argv[]){
     sendRequests();
 
     closeCommunications();
-
-    pthread_join(tid, NULL);
     
+    pthread_join(tid, NULL);
+
     queueMutexFree(&requests, &requestsMutex);
 
     return 0;
