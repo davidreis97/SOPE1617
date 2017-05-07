@@ -10,6 +10,7 @@
 #include "queue.h"
 #include "constants.h"
 #include <pthread.h>
+#include <semaphore.h>
 
 typedef struct command{
     int requests;
@@ -22,9 +23,9 @@ FILEDESCRIPTORS fds;
 
 QUEUE requests;
 
-int threadCompleted = 0;
-
 pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
+
+int endRejection;
 
 void* rejectionHandler(void* arg){
 
@@ -32,6 +33,9 @@ void* rejectionHandler(void* arg){
     int i = 0;
 
     while((i = read(fds.fifoRejected, &temp, sizeof(struct request_info)))){
+
+        endRejection = 0;
+
         if(i == -1){
             printf("File Desc: %d",fds.fifoRejected);
             perror("READ ERROR");
@@ -53,16 +57,14 @@ void* rejectionHandler(void* arg){
             printf("Retrying\n");
             queueMutexPush(req, &requests, &requestsMutex);
         }
+
+        endRejection = 1;
     }
 
-
     printf("Exiting thread");
-    threadCompleted = 1;
 
     return NULL;
 }
-
-int DEBUG = 0;
 
 void argumentHandling(int argc, char*argv[]){    
     if (argc != 3){
@@ -104,7 +106,6 @@ void initCommunications(){
         perror("Couldn't create FIFO '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
-
 
     if((fds.fifoRequests = open("/tmp/entrada", O_WRONLY)) < 0){
         perror("Couldn't open FIFO '/tmp/entrada' ");
@@ -154,8 +155,7 @@ void sendRequests(){
 
     time (&rawtime);
     timeinfo = localtime (&rawtime); 
-    
-    while(!threadCompleted){
+    while(1){
         while(!queueMutexIsEmpty(&requests,&requestsMutex)){
             REQUEST *req = (REQUEST *)queueMutexPop(&requests, &requestsMutex);
 
@@ -166,6 +166,9 @@ void sendRequests(){
             write(fds.fifoRequests, req, sizeof(struct request_info));
 
             free(req);
+        }
+        if(endRejection && SAUNAACABOU){
+            break;
         }
     }
 }
@@ -202,8 +205,6 @@ void startRejectionHandler(pthread_t* tid){
     pthread_create(tid, NULL, rejectionHandler, NULL);
 }
 
-
-
 int main(int argc, char *argv[]){
 
     pthread_t tid;
@@ -224,10 +225,12 @@ int main(int argc, char *argv[]){
 
     sendRequests();
 
-    closeCommunications();
-    
+    pthread_cancel(tid);
+
     pthread_join(tid, NULL);
 
+    closeCommunications();
+    
     queueMutexFree(&requests, &requestsMutex);
 
     return 0;

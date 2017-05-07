@@ -8,6 +8,8 @@
 #include <sys/stat.h>
 #include "constants.h"
 #include "queue.h"
+#include <semaphore.h>
+#include <sys/mman.h>
 
 typedef struct command{
     int slots;
@@ -24,6 +26,8 @@ pthread_mutex_t slotsMutex = PTHREAD_MUTEX_INITIALIZER;
 int slotsAvailable;
 
 QUEUE threads;
+
+int finished;
 
 void argumentHandling(int argc, char*argv[]){    
     if (argc != 2){
@@ -59,6 +63,7 @@ void initCommunications(){
         exit(EXIT_FAILURE);
     }
 
+    
 
 }
 
@@ -88,37 +93,44 @@ void *processUser(void *arg){
 void startListener(){
     char currGender;
     REQUEST req;
+    int i = 0;
 
     slotsAvailable = command.slots;
     
-    while(read(fds.fifoRequests,&req,sizeof(struct request_info))){        
-        if (currGender != req.gender && slotsAvailable != command.slots){
-            write(fds.fifoRejected,&req,sizeof(struct request_info));
+    while((i = read(fds.fifoRequests,&req,sizeof(struct request_info)))){
+        if(i == -1){
+            finished = 1;
         }else{
-            currGender = req.gender;
-            pthread_t *tid = malloc(sizeof(pthread_t));
-            int *time = malloc(sizeof(int));
-
-            printf("REQUEST: %c / %d\n",req.gender,req.time);
+            finished = 0;
             
-            while(slotsAvailable <= 0);
+            if (currGender != req.gender && slotsAvailable != command.slots){
+                write(fds.fifoRejected,&req,sizeof(struct request_info));
+            }else{
+                currGender = req.gender;
+                pthread_t *tid = malloc(sizeof(pthread_t));
+                int *time = malloc(sizeof(int));
 
-            if(pthread_mutex_lock(&slotsMutex)){
-                perror("MUTEX LOCK ERROR");
-                exit(1);
+                printf("REQUEST: %c / %d\n",req.gender,req.time);
+                
+                while(slotsAvailable <= 0);
+
+                if(pthread_mutex_lock(&slotsMutex)){
+                    perror("MUTEX LOCK ERROR");
+                    exit(1);
+                }
+
+                slotsAvailable--;
+
+                if(pthread_mutex_unlock(&slotsMutex)){
+                    perror("MUTEX LOCK ERROR");
+                    exit(1);
+                }
+
+                *time = req.time;
+                pthread_create(tid, NULL, processUser, time);
+
+                queuePush(tid,&threads);
             }
-
-            slotsAvailable--;
-
-            if(pthread_mutex_unlock(&slotsMutex)){
-                perror("MUTEX LOCK ERROR");
-                exit(1);
-            }
-
-            *time = req.time;
-            pthread_create(tid, NULL, processUser, time);
-
-            queuePush(tid,&threads);
         }
     }
 
