@@ -11,6 +11,7 @@
 #include "constants.h"
 #include <pthread.h>
 #include <semaphore.h>
+#include <sys/times.h>
 
 typedef struct command{
     int requests;
@@ -19,22 +20,41 @@ typedef struct command{
 
 COMMAND command;
 
+clock_t start = 0;
+
 FILEDESCRIPTORS fds;
 
 QUEUE requests;
 
 pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
 
-int endRejection;
+int endRejection = 0;
+
+double getTime() {
+    clock_t end;
+    struct tms t;
+    long ticks;
+
+    if(start == 0){
+        start = times(&t);
+    }
+
+    ticks = sysconf(_SC_CLK_TCK);
+
+    end = times(&t);
+
+    return ((double)(end-start) * 1000/ticks);
+}
 
 void* rejectionHandler(void* arg){
 
     REQUEST temp;
     int i = 0;
+    char message[512];
 
     while((i = read(fds.fifoRejected, &temp, sizeof(struct request_info)))){
 
-        endRejection = 0;
+        memset(message, '\0', 512*sizeof(char));
 
         if(i == -1){
             printf("File Desc: %d",fds.fifoRejected);
@@ -46,22 +66,24 @@ void* rejectionHandler(void* arg){
 
         *req = temp;
 
-        printf("Read %d bytes from %d\n",i,fds.fifoRejected);
+        req->rejections++;
+
+        sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - REJEITADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
+        write(fds.fileLog, message, sizeof(char)*512);
 
         if(req->rejections >= 3){
-            printf("Rejecting %d\n",req->serialNum);
+            sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - DESCARTADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
+            write(fds.fileLog, message, sizeof(char)*512);
+            
             free(req);
         }
         else{
-            req->rejections++;
-            printf("Retrying\n");
             queueMutexPush(req, &requests, &requestsMutex);
         }
 
-        endRejection = 1;
     }
 
-    printf("Exiting thread");
+    endRejection = 1;
 
     return NULL;
 }
@@ -150,24 +172,19 @@ void closeCommunications(){
 void sendRequests(){
     char message[512];
 
-    time_t rawtime;
-    struct tm * timeinfo;
-
-    time (&rawtime);
-    timeinfo = localtime (&rawtime); 
     while(1){
         while(!queueMutexIsEmpty(&requests,&requestsMutex)){
+            memset(message, '\0', 512*sizeof(char));
             REQUEST *req = (REQUEST *)queueMutexPop(&requests, &requestsMutex);
 
-            sprintf(message,"%s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
-            printf("SENT REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
+            sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - PEDIDO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
             write(fds.fileLog, message, sizeof(char)*512);
 
             write(fds.fifoRequests, req, sizeof(struct request_info));
 
             free(req);
         }
-        if(endRejection && SAUNAACABOU){
+        if(endRejection){
             break;
         }
     }
@@ -175,12 +192,6 @@ void sendRequests(){
 
 void generateRequests(){
     int serialNum = 0;
-
-    time_t rawtime;
-    struct tm * timeinfo;
-
-    time (&rawtime);
-    timeinfo = localtime (&rawtime); 
     
     while (command.requests > 0) {
         REQUEST *req = malloc(sizeof(struct request_info));
@@ -196,8 +207,6 @@ void generateRequests(){
 
         serialNum++;
         command.requests--;
-
-        printf("GENERATED REQUEST: %s - %d - %d: %c - %d - %s\n",asctime(timeinfo), getpid(), req->serialNum, req->gender, req->time, "PEDIDO");
     }
 }
 
@@ -206,14 +215,13 @@ void startRejectionHandler(pthread_t* tid){
 }
 
 int main(int argc, char *argv[]){
-
-    pthread_t tid;
-
-    srand(time(NULL));
-
-    requests.dynamic = 1;
     
+    pthread_t tid;
+    srand(time(NULL));
+    requests.dynamic = 1;
     memset(&command,0,sizeof(struct command));
+
+    getTime();
 
     argumentHandling(argc, argv);
     
@@ -225,13 +233,10 @@ int main(int argc, char *argv[]){
 
     sendRequests();
 
-    pthread_cancel(tid);
-
     pthread_join(tid, NULL);
 
     closeCommunications();
     
     queueMutexFree(&requests, &requestsMutex);
-
     return 0;
 }

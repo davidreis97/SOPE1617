@@ -10,6 +10,7 @@
 #include "queue.h"
 #include <semaphore.h>
 #include <sys/mman.h>
+#include <sys/times.h>
 
 typedef struct command{
     int slots;
@@ -21,6 +22,8 @@ COMMAND command;
 
 FILEDESCRIPTORS fds;
 
+clock_t start = 0;
+
 pthread_mutex_t slotsMutex = PTHREAD_MUTEX_INITIALIZER;
 
 int slotsAvailable;
@@ -28,6 +31,22 @@ int slotsAvailable;
 QUEUE threads;
 
 int finished;
+
+double getTime() {
+    clock_t end;
+    struct tms t;
+    long ticks;
+
+    if(start == 0){
+        start = times(&t);
+    }
+
+    ticks = sysconf(_SC_CLK_TCK);
+
+    end = times(&t);
+
+    return ((double)(end-start) * 1000/ticks);
+}
 
 void argumentHandling(int argc, char*argv[]){    
     if (argc != 2){
@@ -44,7 +63,6 @@ void argumentHandling(int argc, char*argv[]){
 }
 
 void initCommunications(){
-
 	char filename[20];
     sprintf(filename, "/tmp/bal.%d", getpid());
 
@@ -62,15 +80,11 @@ void initCommunications(){
         perror("Couldn't open FIFO '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
-
-    
-
 }
 
 void *processUser(void *arg){
     int *time = (int *)arg;
 
-    printf("%d\n",*time);
     sleep(*time);
 
     if(pthread_mutex_lock(&slotsMutex)){
@@ -95,42 +109,58 @@ void startListener(){
     REQUEST req;
     int i = 0;
 
+    char message[512];
+    memset(message,'\0',512*sizeof(char));
+
     slotsAvailable = command.slots;
     
     while((i = read(fds.fifoRequests,&req,sizeof(struct request_info)))){
-        if(i == -1){
-            finished = 1;
-        }else{
-            finished = 0;
+        
+        memset(message,'\0',512*sizeof(char));
+        sprintf(message,"%f - %9.9d - %9.9d - %9.9d: %c - %9.9d - RECEBIDO\n",
+            getTime(), getpid(),0, req.serialNum, req.gender, req.time);
+        
+        write(fds.fileLog, message, sizeof(char)*512);
+
+        if (currGender != req.gender && slotsAvailable != command.slots){ //REJEITADO
             
-            if (currGender != req.gender && slotsAvailable != command.slots){
-                write(fds.fifoRejected,&req,sizeof(struct request_info));
-            }else{
-                currGender = req.gender;
-                pthread_t *tid = malloc(sizeof(pthread_t));
-                int *time = malloc(sizeof(int));
+            memset(message,'\0',512*sizeof(char));
+            sprintf(message,"%f - %9.9d - %9.9d - %9.9d: %c - %9.9d - REJEITADO\n",
+                getTime(), getpid(), 0, req.serialNum, req.gender, req.time);
+            write(fds.fileLog, message, sizeof(char)*512);
 
-                printf("REQUEST: %c / %d\n",req.gender,req.time);
-                
-                while(slotsAvailable <= 0);
+            write(fds.fifoRejected,&req,sizeof(struct request_info));
+        
+       }else{ //ACEITE
 
-                if(pthread_mutex_lock(&slotsMutex)){
-                    perror("MUTEX LOCK ERROR");
-                    exit(1);
-                }
+            currGender = req.gender;
+            pthread_t *tid = malloc(sizeof(pthread_t));
+            int *time = malloc(sizeof(int));
+            
+            while(slotsAvailable <= 0);
 
-                slotsAvailable--;
-
-                if(pthread_mutex_unlock(&slotsMutex)){
-                    perror("MUTEX LOCK ERROR");
-                    exit(1);
-                }
-
-                *time = req.time;
-                pthread_create(tid, NULL, processUser, time);
-
-                queuePush(tid,&threads);
+            if(pthread_mutex_lock(&slotsMutex)){
+                perror("MUTEX LOCK ERROR");
+                exit(1);
             }
+
+            slotsAvailable--;
+
+            if(pthread_mutex_unlock(&slotsMutex)){
+                perror("MUTEX LOCK ERROR");
+                exit(1);
+            }
+
+            *time = req.time;
+            pthread_create(tid, NULL, processUser, time);
+            
+            memset(message,'\0',512*sizeof(char));
+            sprintf(message,"%f - %9.9d - %9.9d - %9.9d: %c - %9.9d - SERVIDO\n",
+                getTime(), getpid(),(unsigned int) *tid, req.serialNum, req.gender, req.time);
+
+            write(fds.fileLog, message, sizeof(char)*512);
+
+            queuePush(tid,&threads);
         }
     }
 
