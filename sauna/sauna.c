@@ -143,7 +143,7 @@ void closeCommunications(){
 void *processUser(void *arg){
     int *time = (int *)arg;
 
-    sleep(*time);
+    usleep((*time) * 1000);
 
     if(pthread_mutex_lock(&slotsMutex)){
         perror("MUTEX LOCK ERROR");
@@ -254,11 +254,11 @@ int main(int argc, char *argv[]){
 
     threads.dynamic = 1;
 
-    getTime();
-
     argumentHandling(argc, argv);
 
     initCommunications();
+
+    getTime();
 
     startListener();
 

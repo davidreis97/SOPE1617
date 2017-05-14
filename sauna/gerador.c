@@ -294,11 +294,11 @@ int main(int argc, char *argv[]){
         exit(EXIT_FAILURE);
     }
 
-    getTime();
-
     argumentHandling(argc, argv);
     
     initCommunications();
+
+    getTime();
 
     semWait();
     record[REQUESTS] = command.requests;
