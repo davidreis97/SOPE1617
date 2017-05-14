@@ -11,12 +11,14 @@
 #include <semaphore.h>
 #include <sys/mman.h>
 #include <sys/times.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/sem.h>
+
 
 typedef struct command{
     int slots;
 }COMMAND;
-
-int DEBUG = 0;
 
 COMMAND command;
 
@@ -30,7 +32,35 @@ int slotsAvailable;
 
 QUEUE threads;
 
-int finished;
+int *record = NULL;
+int shmid = -1;
+int semid = -1;
+
+void semWait(){
+    struct sembuf semopr;
+
+    semopr.sem_num = 0;
+    semopr.sem_op = -1;
+    semopr.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &semopr, 1) == -1){
+        perror("SEMOP (WAIT) ERROR");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void semSignal(){
+    struct sembuf semopr;
+
+    semopr.sem_num = 0;
+    semopr.sem_op = 1;
+    semopr.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &semopr, 1) == -1){
+        perror("SEMOP (SIGNAL) ERROR");
+        exit(EXIT_FAILURE);
+    }
+}
 
 double getTime() {
     clock_t end;
@@ -64,6 +94,7 @@ void argumentHandling(int argc, char*argv[]){
 
 void initCommunications(){
 	char filename[20];
+    key_t key;
     sprintf(filename, "/tmp/bal.%d", getpid());
 
     if((fds.fileLog = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
@@ -80,6 +111,29 @@ void initCommunications(){
         perror("Couldn't open FIFO '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
+
+    key = ftok("gerador", 0);
+
+    if((shmid = shmget(key, 0, SHM_R | SHM_W)) == -1){
+        perror("SHMGET ERROR");
+        exit(EXIT_FAILURE);
+    }
+    
+    if((record = (int *) shmat(shmid, 0, 0)) == NULL){
+        perror("SHMAT ERROR");
+        exit(EXIT_FAILURE);
+    }
+
+    key = ftok("gerador", 1);
+
+    if((semid = semget(key, 1, SEM_R | SEM_A)) == -1){
+        perror("SEMGET ERROR");
+        exit(EXIT_FAILURE);
+    }
+
+    int flags = fcntl(fds.fifoRequests, F_GETFL, 0);
+    fcntl(fds.fifoRequests, F_SETFL, flags | O_NONBLOCK);
+
 }
 
 void *processUser(void *arg){
@@ -107,60 +161,80 @@ void *processUser(void *arg){
 void startListener(){
     char currGender;
     REQUEST req;
-    int i = 0;
 
     char message[512];
     memset(message,'\0',512*sizeof(char));
 
     slotsAvailable = command.slots;
     
-    while((i = read(fds.fifoRequests,&req,sizeof(struct request_info)))){
-        
-        memset(message,'\0',512*sizeof(char));
-        sprintf(message,"%f - %9.9d - %9.9d - %9.9d: %c - %9.9d - RECEBIDO\n",
-            getTime(), getpid(),0, req.serialNum, req.gender, req.time);
-        
-        write(fds.fileLog, message, sizeof(char)*512);
+    while(1){
 
-        if (currGender != req.gender && slotsAvailable != command.slots){ //REJEITADO
-            
+        semWait();
+        if(!record[REQUESTS] && !record[REJECTIONS]){
+            semSignal();
+            break;
+        }
+        semSignal();
+
+        if(read(fds.fifoRequests,&req,sizeof(struct request_info)) > 0){
+
             memset(message,'\0',512*sizeof(char));
-            sprintf(message,"%f - %9.9d - %9.9d - %9.9d: %c - %9.9d - REJEITADO\n",
-                getTime(), getpid(), 0, req.serialNum, req.gender, req.time);
+            sprintf(message,"%f - %9.9d - %9.9d - %9.9d: %c - %9.9d - RECEBIDO\n",
+                getTime(), getpid(),0, req.serialNum, req.gender, req.time);
+             
             write(fds.fileLog, message, sizeof(char)*512);
 
-            write(fds.fifoRejected,&req,sizeof(struct request_info));
-        
-       }else{ //ACEITE
+            if (currGender != req.gender && slotsAvailable != command.slots && slotsAvailable + 1 != command.slots){ //REJEITADO
+                 
+                memset(message,'\0',512*sizeof(char));
+                sprintf(message,"%f - %9.9d - %9.9d - %9.9d: %c - %9.9d - REJEITADO\n",
+                    getTime(), getpid(), 0, req.serialNum, req.gender, req.time);
+                write(fds.fileLog, message, sizeof(char)*512);
 
-            currGender = req.gender;
-            pthread_t *tid = malloc(sizeof(pthread_t));
-            int *time = malloc(sizeof(int));
-            
-            while(slotsAvailable <= 0);
+                semWait();
+                record[REJECTIONS]++;
+                record[REQUESTS]--;
+                semSignal();
 
-            if(pthread_mutex_lock(&slotsMutex)){
-                perror("MUTEX LOCK ERROR");
-                exit(1);
-            }
+                write(fds.fifoRejected,&req,sizeof(struct request_info));
+             
+            }else{ //ACEITE
 
-            slotsAvailable--;
+                pthread_t *tid = malloc(sizeof(pthread_t));
+                int *time = malloc(sizeof(int));
+                
+                //If the person is from the same gender, waits instead of rejecting. Also prevents a user from a certain gender from entering the sauna while there is one last member of the opposite gender inside.
+                while(slotsAvailable <= 0 || (currGender != req.gender && slotsAvailable != command.slots));
 
-            if(pthread_mutex_unlock(&slotsMutex)){
-                perror("MUTEX LOCK ERROR");
-                exit(1);
-            }
+                currGender = req.gender;
 
-            *time = req.time;
-            pthread_create(tid, NULL, processUser, time);
-            
-            memset(message,'\0',512*sizeof(char));
-            sprintf(message,"%f - %9.9d - %9.9d - %9.9d: %c - %9.9d - SERVIDO\n",
-                getTime(), getpid(),(unsigned int) *tid, req.serialNum, req.gender, req.time);
+                semWait();
+                record[REQUESTS]--;
+                semSignal();
 
-            write(fds.fileLog, message, sizeof(char)*512);
+                if(pthread_mutex_lock(&slotsMutex)){
+                    perror("MUTEX LOCK ERROR");
+                    exit(1);
+                }
 
-            queuePush(tid,&threads);
+                slotsAvailable--;
+
+                if(pthread_mutex_unlock(&slotsMutex)){
+                    perror("MUTEX LOCK ERROR");
+                    exit(1);
+                }
+
+                *time = req.time;
+                pthread_create(tid, NULL, processUser, time);
+                 
+                memset(message,'\0',512*sizeof(char));
+                sprintf(message,"%f - %9.9d - %9.9d - %9.9d: %c - %9.9d - SERVIDO\n",
+                    getTime(), getpid(),(unsigned int) *tid, req.serialNum, req.gender, req.time);
+
+                write(fds.fileLog, message, sizeof(char)*512);
+
+                queuePush(tid,&threads);
+             }
         }
     }
 
@@ -187,6 +261,11 @@ void closeCommunications(){
         perror("Couldn't close '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
+
+    if(shmdt(record)){
+        perror("SHMDT ERROR");
+        exit(EXIT_FAILURE);
+    }
 }
 
 
@@ -204,4 +283,6 @@ int main(int argc, char *argv[]){
     closeCommunications();
 
     queueFree(&threads);
+
+    return 0;
 }

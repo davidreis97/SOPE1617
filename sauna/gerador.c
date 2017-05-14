@@ -12,6 +12,9 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <sys/times.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/sem.h>
 
 typedef struct command{
     int requests;
@@ -25,10 +28,53 @@ clock_t start = 0;
 FILEDESCRIPTORS fds;
 
 QUEUE requests;
-
 pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
 
-int endRejection = 0;
+int *record = NULL;
+int shmid = -1;
+int semid = -1;
+
+void sharedCleaner(void){ //Always closes shared memory even when program terminates unexpectedly
+    union semun arg;
+    arg.val = 0;
+    
+    if(shmctl(shmid, IPC_RMID, NULL)){
+        perror("SHMCTL ERROR");
+        exit(EXIT_FAILURE);
+    }
+
+    if(semctl(semid, 0, IPC_RMID, arg) == -1){
+        perror("SEMCTL FREEING SEMAPHORE ERROR");
+        exit(EXIT_FAILURE);
+    }
+}
+
+
+void semWait(){
+    struct sembuf semopr;
+
+    semopr.sem_num = 0;
+    semopr.sem_op = -1;
+    semopr.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &semopr, 1) == -1){
+        perror("SEMOP (WAIT) ERROR");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void semSignal(){
+    struct sembuf semopr;
+
+    semopr.sem_num = 0;
+    semopr.sem_op = 1;
+    semopr.sem_flg = SEM_UNDO;
+
+    if (semop(semid, &semopr, 1) == -1){
+        perror("SEMOP (SIGNAL) ERROR");
+        exit(EXIT_FAILURE);
+    }
+}
 
 double getTime() {
     clock_t end;
@@ -47,44 +93,50 @@ double getTime() {
 }
 
 void* rejectionHandler(void* arg){
-
     REQUEST temp;
-    int i = 0;
     char message[512];
 
-    while((i = read(fds.fifoRejected, &temp, sizeof(struct request_info)))){
+    while(1){
 
-        memset(message, '\0', 512*sizeof(char));
-
-        if(i == -1){
-            printf("File Desc: %d",fds.fifoRejected);
-            perror("READ ERROR");
-            pthread_exit(NULL);
+        semWait();
+        if(!record[REQUESTS] && !record[REJECTIONS]){
+            semSignal();
+            break;
         }
+        semSignal();
 
-        REQUEST* req = malloc(sizeof(struct request_info));
+        if(read(fds.fifoRejected, &temp, sizeof(struct request_info)) > 0){ //Non-Blocking
+            memset(message, '\0', 512*sizeof(char));
 
-        *req = temp;
+            REQUEST* req = malloc(sizeof(struct request_info));
 
-        req->rejections++;
+            *req = temp;
 
-        sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - REJEITADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
-        write(fds.fileLog, message, sizeof(char)*512);
+            req->rejections++;
 
-        if(req->rejections >= 3){
-            sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - DESCARTADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
+            sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - REJEITADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
             write(fds.fileLog, message, sizeof(char)*512);
+
+            if(req->rejections >= 3){
+                sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - DESCARTADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
+                write(fds.fileLog, message, sizeof(char)*512);
             
-            free(req);
-        }
-        else{
-            queueMutexPush(req, &requests, &requestsMutex);
-        }
+                free(req);
+                
+                semWait();
+                record[REJECTIONS]--;
+                semSignal();
+            }
+            else{
+                queueMutexPush(req, &requests, &requestsMutex);
 
+                semWait();
+                record[REJECTIONS]--;
+                record[REQUESTS]++;
+                semSignal();
+            }
+        }
     }
-
-    endRejection = 1;
-
     return NULL;
 }
 
@@ -108,13 +160,42 @@ void argumentHandling(int argc, char*argv[]){
 }
 
 void initCommunications(){
-
+    key_t key;
+    union semun arg;
     char filename[20];
     sprintf(filename, "/tmp/ger.%d", getpid());
 
     if((fds.fileLog = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
         perror("Couldn't create file_info ");
         exit(EXIT_FAILURE);
+    }
+
+    /* Creates shared memory block and semaphore (mutex) to synchronize it */
+
+    key = ftok("gerador",0);
+
+    if((shmid = shmget(key, 2 * sizeof(int), IPC_CREAT | IPC_EXCL | SHM_R | SHM_W)) == -1){
+        perror("SHMGET ERROR");
+        exit(EXIT_FAILURE);
+    }
+    
+    if((record = (int *) shmat(shmid, 0, 0)) == NULL){
+        perror("SHMAT ERROR");
+        exit(EXIT_FAILURE);
+    }
+
+
+    key = ftok("gerador",1);
+
+    arg.val = 1;
+
+    if ((semid = semget(key, 1, IPC_CREAT | IPC_EXCL | SEM_R | SEM_A)) == -1){
+        perror("SEMGET ERROR");
+        exit(EXIT_FAILURE);
+    }
+
+    if (semctl(semid, 0, SETVAL, arg) == -1){
+        perror("SEMCTL ALLOCATING VALUE ERROR");
     }
 
     /* Creates FIFO's "entrada" e "rejeitados" */
@@ -139,10 +220,11 @@ void initCommunications(){
         exit(EXIT_FAILURE);
     }
 
+    int flags = fcntl(fds.fifoRejected, F_GETFL, 0);
+    fcntl(fds.fifoRejected, F_SETFL, flags | O_NONBLOCK);
 }
 
 void closeCommunications(){
-
     if(close(fds.fileLog) < 0){
         perror("Couldn't close file ");
         exit(EXIT_FAILURE);
@@ -173,8 +255,17 @@ void sendRequests(){
     char message[512];
 
     while(1){
-        while(!queueMutexIsEmpty(&requests,&requestsMutex)){
+
+        semWait();
+        if(!record[REQUESTS] && !record[REJECTIONS]){
+            semSignal();
+            break;
+        }
+        semSignal();
+
+        if(!queueMutexIsEmpty(&requests,&requestsMutex)){
             memset(message, '\0', 512*sizeof(char));
+
             REQUEST *req = (REQUEST *)queueMutexPop(&requests, &requestsMutex);
 
             sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - PEDIDO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
@@ -183,9 +274,6 @@ void sendRequests(){
             write(fds.fifoRequests, req, sizeof(struct request_info));
 
             free(req);
-        }
-        if(endRejection){
-            break;
         }
     }
 }
@@ -203,7 +291,7 @@ void generateRequests(){
         req->rejections = 0;
         req->time = 1 + rand()%command.maxTime;
         
-        queueMutexPush(req, &requests, &requestsMutex); //Sends this request to the bottom of the queueMutex
+        queueMutexPush(req, &requests, &requestsMutex);
 
         serialNum++;
         command.requests--;
@@ -211,7 +299,7 @@ void generateRequests(){
 }
 
 void startRejectionHandler(pthread_t* tid){
-    pthread_create(tid, NULL, rejectionHandler, NULL);
+    pthread_create(tid, NULL, rejectionHandler, NULL); //TODO - CHECK RETURN
 }
 
 int main(int argc, char *argv[]){
@@ -221,11 +309,20 @@ int main(int argc, char *argv[]){
     requests.dynamic = 1;
     memset(&command,0,sizeof(struct command));
 
+    if(atexit(sharedCleaner) == -1){
+        perror("ATEXIT ERROR");
+        exit(EXIT_FAILURE);
+    }
+
     getTime();
 
     argumentHandling(argc, argv);
     
     initCommunications();
+
+    semWait();
+    record[REQUESTS] = command.requests;
+    semSignal();
 
     startRejectionHandler(&tid);
 
@@ -235,8 +332,8 @@ int main(int argc, char *argv[]){
 
     pthread_join(tid, NULL);
 
-    closeCommunications();
-    
+    closeCommunications();                
+
     queueMutexFree(&requests, &requestsMutex);
     return 0;
 }
