@@ -1,0 +1,21 @@
+up201607927 - David Alexandre Gomes Reis
+up201607928 - Francisco Maria Fernandes Machado Santos
+
+T5G06
+
+Para o funcionamento harmonioso de ambas as partes, vários dados tiveram de ser partilhados, tanto entre threads como entre processos. 
+
+No caso da fila de pedidos que o gerador usa para tratar os pedidos de uma forma FIFO, tanto a thread principal como a thread que trata de pedidos rejeitados tiveram de ser sincronizadas de forma a não tentarem alterar a fila ao mesmo tempo. Dessa forma, desenvolvemos uma pequena "biblioteca" independente do projeto (nos ficheiros queue.c e queue.h) que, explicando de forma sucinta, suporta as funcoes push e pop típicas de uma fila FIFO, e que tem também um set de funções que permitem usar um Mutex antes de serem feitas alterações à fila. Optamos por usar um Mutex pthread dado que este problema de sincronização é entre duas threads.
+
+Note-se que a sauna também faz uso desta queue, mas como esta é apenas alterada por uma thread num processo não foi necessario usar o set de funções mutex.
+
+Outro problema com que nos deparamos foi com o término do programa. Para esse efeito optamos por usar um bloco de memória partilhada com o tamanho de 2*sizeof(int), com o efeito de contabilizar o número de pedidos (REQUESTS) e pedidos rejeitados (REJECTED) que ainda estão por tratar num determinado momento do programa. Ou seja, ao longo da execução essas duas variaveis vão sendo alteradas, conforme os pedidos circulam entre sauna, gerador e thread de pedidos rejeitados. Assim sendo, o fim do programa é determinado quando tanto a variável REQUESTS e REJECTED são zero. 
+
+Estas variáveis são, portanto, alteradas por três "entidades" em simultâneo, o gerador, a sauna e o thread de pedidos rejeitados, que pertence ao processo gerador. De forma a sincronizar as alterações destas variáveis, e tendo em conta que este problema de sincronização era entre três entidades em que uma delas pertence a outro processo "isolado" (não é uma thread nem um processo filho), optámos por usar um semáforo da API POSIX inicializado a 1 (logo, um Mutex).
+
+Na parte da sauna também foi necessário usar um Mutex para controlar o acesso à variável slotsAvailable (contabiliza o número de lugares vazios na sauna) já que é modificada por todas as threads que estejam a sair da sauna. (As threads incrementam essa variável quando o seu período de sleep() termina.)
+
+
+NOTA SOBRE instanciaGerador: O salto grande de tempo na linha 23 do 1 segundo de execução para os 9 segundos deve-se ao facto de eu ter demorado algum tempo entre inserir o comando do gerador e o comando da sauna, logo o primeiro pedido rejeitado só chegou alguns segundos depois.
+
+NOTA SOBRE ALTERAÇÃO DE SEXO NA SAUNA: De forma a permitir a alteração de sexo da sauna durante a execução (ou seja, começar com uma sauna em que só se permite mulheres e posteriormente, quando já nao há mais mulheres na sauna, permitir a entrada de um homem) é permitido que um elemento do sexo oposto seja aceite quando já só há um elemento do sexo oposto na sauna, ficando a aguardar que este ultimo elemento saia.

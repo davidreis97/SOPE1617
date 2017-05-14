@@ -1,31 +1,10 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include "queue.h"
-#include "constants.h"
-#include <pthread.h>
-#include <semaphore.h>
-#include <sys/times.h>
-#include <sys/ipc.h>
-#include <sys/shm.h>
-#include <sys/sem.h>
-
-typedef struct command{
-    int requests;
-    int maxTime;
-} COMMAND;
+#include "gerador.h"
 
 COMMAND command;
 
 clock_t start = 0;
 
-FILEDESCRIPTORS fds;
+FILEDESCRIPTORS fd;
 
 QUEUE requests;
 pthread_mutex_t requestsMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -34,7 +13,7 @@ int *record = NULL;
 int shmid = -1;
 int semid = -1;
 
-void sharedCleaner(void){ //Always closes shared memory even when program terminates unexpectedly
+void sharedCleaner(void){ //Always closes shared memory even when program terminates with an error
     union semun arg;
     arg.val = 0;
     
@@ -77,19 +56,20 @@ void semSignal(){
 }
 
 double getTime() {
-    clock_t end;
-    struct tms t;
-    long ticks;
-
-    if(start == 0){
-        start = times(&t);
+    double tickDiff = 0, SDiff = 0;
+    clock_t now = 0;
+    
+    if (start == 0){
+        start=clock();
+        return 0;
     }
 
-    ticks = sysconf(_SC_CLK_TCK);
+    now = clock();
 
-    end = times(&t);
-
-    return ((double)(end-start) * 1000/ticks);
+    tickDiff = now - start;
+    SDiff = tickDiff/(CLOCKS_PER_SEC);
+    
+    return SDiff*1000.0;
 }
 
 void* rejectionHandler(void* arg){
@@ -105,7 +85,7 @@ void* rejectionHandler(void* arg){
         }
         semSignal();
 
-        if(read(fds.fifoRejected, &temp, sizeof(struct request_info)) > 0){ //Non-Blocking
+        if(read(fd.fifoRejected, &temp, sizeof(struct request_info)) > 0){ //Non-Blocking
             memset(message, '\0', 512*sizeof(char));
 
             REQUEST* req = malloc(sizeof(struct request_info));
@@ -114,12 +94,12 @@ void* rejectionHandler(void* arg){
 
             req->rejections++;
 
-            sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - REJEITADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
-            write(fds.fileLog, message, sizeof(char)*512);
+            sprintf(message,"%.2f - %6.6d - %6.6d: %c - %3.3d - REJEITADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
+            write(fd.fileLog, message, sizeof(char)*512);
 
             if(req->rejections >= 3){
-                sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - DESCARTADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
-                write(fds.fileLog, message, sizeof(char)*512);
+                sprintf(message,"%.2f - %6.6d - %6.6d: %c - %3.3d - DESCARTADO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
+                write(fd.fileLog, message, sizeof(char)*512);
             
                 free(req);
                 
@@ -165,7 +145,7 @@ void initCommunications(){
     char filename[20];
     sprintf(filename, "/tmp/ger.%d", getpid());
 
-    if((fds.fileLog = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
+    if((fd.fileLog = open(filename, O_WRONLY | O_CREAT | O_EXCL, OP_MODE)) < 0){
         perror("Couldn't create file_info ");
         exit(EXIT_FAILURE);
     }
@@ -210,32 +190,32 @@ void initCommunications(){
         exit(EXIT_FAILURE);
     }
 
-    if((fds.fifoRequests = open("/tmp/entrada", O_WRONLY)) < 0){
+    if((fd.fifoRequests = open("/tmp/entrada", O_WRONLY)) < 0){
         perror("Couldn't open FIFO '/tmp/entrada' ");
         exit(EXIT_FAILURE); 
     }
 
-    if((fds.fifoRejected = open("/tmp/rejeitados", O_RDONLY)) < 0){
+    if((fd.fifoRejected = open("/tmp/rejeitados", O_RDONLY)) < 0){
         perror("Couldn't open FIFO '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
 
-    int flags = fcntl(fds.fifoRejected, F_GETFL, 0);
-    fcntl(fds.fifoRejected, F_SETFL, flags | O_NONBLOCK);
+    int flags = fcntl(fd.fifoRejected, F_GETFL, 0);
+    fcntl(fd.fifoRejected, F_SETFL, flags | O_NONBLOCK);
 }
 
 void closeCommunications(){
-    if(close(fds.fileLog) < 0){
+    if(close(fd.fileLog) < 0){
         perror("Couldn't close file ");
         exit(EXIT_FAILURE);
     }
 
-    if(close(fds.fifoRequests) < 0){
+    if(close(fd.fifoRequests) < 0){
         perror("Couldn't close '/tmp/entrada' ");
         exit(EXIT_FAILURE);
     }
 
-    if(close(fds.fifoRejected) < 0){
+    if(close(fd.fifoRejected) < 0){
         perror("Couldn't close '/tmp/rejeitados' ");
         exit(EXIT_FAILURE);
     }
@@ -268,10 +248,10 @@ void sendRequests(){
 
             REQUEST *req = (REQUEST *)queueMutexPop(&requests, &requestsMutex);
 
-            sprintf(message,"%f - %9.9d - %9.9d: %c - %9.9d - PEDIDO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
-            write(fds.fileLog, message, sizeof(char)*512);
+            sprintf(message,"%.2f - %6.6d - %6.6d: %c - %3.3d - PEDIDO\n",getTime(), getpid(), req->serialNum, req->gender, req->time);
+            write(fd.fileLog, message, sizeof(char)*512);
 
-            write(fds.fifoRequests, req, sizeof(struct request_info));
+            write(fd.fifoRequests, req, sizeof(struct request_info));
 
             free(req);
         }
@@ -299,7 +279,7 @@ void generateRequests(){
 }
 
 void startRejectionHandler(pthread_t* tid){
-    pthread_create(tid, NULL, rejectionHandler, NULL); //TODO - CHECK RETURN
+    pthread_create(tid, NULL, rejectionHandler, NULL);
 }
 
 int main(int argc, char *argv[]){
